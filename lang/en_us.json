@@ -1,0 +1,6 @@
+{
+  "name": "AboutThisApp",
+  "about.title": "About {name}",
+  "about.version": "Version {version}",
+  "about.usage": "Usage: about-this-app <path-to-app.app>"
+}
