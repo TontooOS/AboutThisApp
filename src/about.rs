@@ -28,7 +28,16 @@ pub struct TargetInfo {
   /// Version string, empty when unknown.
   pub version: String,
   /// Extracted icon file path, when the bundle contained one.
+  /// Always the raw bundle file; callers finish it through CoreIcon
+  /// (`beautify_icon`) and track the glass state themselves.
   pub icon_path: Option<PathBuf>,
+}
+
+fn safe_name(app_name: &str) -> String {
+  app_name
+    .chars()
+    .map(|c| if c.is_alphanumeric() { c } else { '_' })
+    .collect()
 }
 
 fn stem_fallback(path: &Path) -> String {
@@ -145,11 +154,7 @@ fn read_zip_bundle(path: &Path, locale: &str) -> Result<TargetInfo, String> {
 }
 
 fn write_temp_icon(app_name: &str, bytes: &[u8]) -> Option<PathBuf> {
-  let safe: String = app_name
-    .chars()
-    .map(|c| if c.is_alphanumeric() { c } else { '_' })
-    .collect();
-  let path = std::env::temp_dir().join(format!("about-this-app-icon-{}.png", safe));
+  let path = std::env::temp_dir().join(format!("about-this-app-icon-{}.png", safe_name(app_name)));
   if fs::write(&path, bytes).is_ok() {
     Some(path)
   } else {
@@ -179,6 +184,47 @@ pub fn load_target(path: &Path, locale: &str) -> Result<TargetInfo, String> {
   read_zip_bundle(path, locale)
 }
 
+/// Run a raw bundle icon through CoreIcon so a plain PNG becomes a proper
+/// Apple-style app icon: 1024x1024 squircle with the Liquid Glass depth
+/// finish (ambient + artwork shadow, inner bevel, specular rim, top gloss,
+/// vibrancy pop, grounding shade). `dark` selects the dark-mode background
+/// (`#1d1d1d`, artwork colors preserved), otherwise the original background
+/// is kept.
+///
+/// Returns the finished PNG path, or `None` when processing fails (callers
+/// fall back to the raw icon).
+pub fn beautify_icon(raw: &Path, app_name: &str, dark: bool) -> Option<PathBuf> {
+  let mut icon = crate::CoreIcon::generator::AppIcon::from_file(raw);
+  icon = if dark { icon.dark() } else { icon.light() };
+  let out = std::env::temp_dir().join(format!(
+    "about-this-app-icon-{}-glass.png",
+    safe_name(app_name)
+  ));
+  icon.save(&out).ok()?;
+  Some(out)
+}
+
+/// Generate a CoreIcon fallback tile for bundles without an icon: a
+/// white/black gradient squircle with the Apple Liquid Glass finish.
+/// Returns the PNG path, or `None` when generation fails (callers fall back
+/// to a plain CSS gradient tile).
+pub fn fallback_icon(app_name: &str) -> Option<PathBuf> {
+  use crate::CoreIcon::generator::{Background, IconCanvas};
+  use crate::CoreIcon::{Color, Gradient};
+  let canvas = IconCanvas::new()
+    .background(Background::Gradient(Gradient::linear_two(
+      Color::WHITE,
+      Color::BLACK,
+    )))
+    .glass();
+  let out = std::env::temp_dir().join(format!(
+    "about-this-app-icon-{}-fallback.png",
+    safe_name(app_name)
+  ));
+  canvas.save(&out).ok()?;
+  Some(out)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -200,5 +246,21 @@ mod tests {
   fn missing_target_errors() {
     let result = load_target(Path::new("/definitely/not/here.app"), "en_us");
     assert!(result.is_err());
+  }
+
+  #[test]
+  fn coreicon_roundtrip_produces_glass_png() {
+    // No fixture needed: generate the fallback tile, then run it through
+    // the beautify pipeline (pure image ops, no display required).
+    let fallback = fallback_icon("RoundtripTest").expect("fallback icon");
+    assert!(fallback.is_file());
+    let glass = beautify_icon(&fallback, "RoundtripTest", true).expect("glass icon");
+    assert!(glass.is_file());
+    let bytes = std::fs::read(&glass).expect("read glass png");
+    // PNG signature + IHDR width/height 1024x1024.
+    assert!(bytes.starts_with(&[0x89, b'P', b'N', b'G']));
+    let w = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
+    let h = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
+    assert_eq!((w, h), (1024, 1024));
   }
 }

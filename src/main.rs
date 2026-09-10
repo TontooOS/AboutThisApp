@@ -6,7 +6,8 @@
 //! Reads `Info.tontoo` (localized `name`, `version`) and the icon
 //! (`App/icon.png`, then `Resources/icon.png`) from the target bundle and
 //! shows a fixed 340x460 card: title bar without maximize button, centered
-//! 120px icon (or white/black gradient fallback), bold app name and a
+//! 120px icon (every icon is finished through CoreIcon into an Apple-style
+//! squircle with the Liquid Glass depth effect), bold app name and a
 //! `Version %version%` line. All text uses SF Pro Display with `en_us` and
 //! `de_de` strings from `lang/`.
 
@@ -27,6 +28,7 @@ struct AboutDelegate {
   app_name: String,
   version: String,
   icon_path: Option<PathBuf>,
+  icon_glass: bool,
 }
 
 impl AppDelegate for AboutDelegate {
@@ -37,6 +39,7 @@ impl AppDelegate for AboutDelegate {
       app_name: self.app_name.clone(),
       version: self.version.clone(),
       icon_path: self.icon_path.clone(),
+      icon_glass: self.icon_glass,
     })
   }
 }
@@ -59,19 +62,28 @@ fn markup_label(text: &str, size: u32, weight: &str, color: &str) -> gtk::Label 
   label
 }
 
-fn icon_widget(icon_path: Option<&PathBuf>, dark: bool) -> gtk::Widget {
+/// Centered 120px app icon. CoreIcon-finished squircles (`glass`) are shown
+/// as-is (rounded with transparency baked in); raw square PNGs get a CSS
+/// corner radius so they never render as a hard square.
+fn icon_widget(icon_path: Option<&PathBuf>, glass: bool, dark: bool) -> gtk::Widget {
   if let Some(path) = icon_path {
     if let Some(path_str) = path.to_str() {
       let picture = gtk::Picture::for_filename(path_str);
+      // Fixed card size: never expand, always centered (GtkPicture would
+      // otherwise stretch to fill the content width).
       picture.set_size_request(120, 120);
-      picture.set_content_fit(gtk::ContentFit::Contain);
+      picture.set_hexpand(false);
+      picture.set_vexpand(false);
       picture.set_halign(gtk::Align::Center);
       picture.set_valign(gtk::Align::Center);
-      crate::UIKit::widget::apply_css(
-        &picture,
-        ".about-icon { border-radius: 28px; box-shadow: 0 2px 12px rgba(0,0,0,0.18); }",
-      );
-      picture.add_css_class("about-icon");
+      picture.set_content_fit(gtk::ContentFit::Contain);
+      if !glass {
+        crate::UIKit::widget::apply_css(
+          &picture,
+          ".about-icon { border-radius: 28px; box-shadow: 0 2px 12px rgba(0,0,0,0.18); }",
+        );
+        picture.add_css_class("about-icon");
+      }
       return picture.upcast();
     }
   }
@@ -101,6 +113,7 @@ struct AboutRoot {
   app_name: String,
   version: String,
   icon_path: Option<PathBuf>,
+  icon_glass: bool,
 }
 
 impl Widget for AboutRoot {
@@ -141,7 +154,7 @@ impl Widget for AboutRoot {
     content.set_margin_start(32);
     content.set_margin_end(32);
 
-    content.append(&icon_widget(self.icon_path.as_ref(), dark));
+    content.append(&icon_widget(self.icon_path.as_ref(), self.icon_glass, dark));
     content.append(&markup_label(&self.app_name, 15, "bold", fg));
     if !self.version.trim().is_empty() {
       let line = lang::t("about.version").replace("{version}", self.version.trim());
@@ -176,11 +189,25 @@ fn main() {
   };
 
   let window_title = lang::t("about.title").replace("{name}", &info.display_name);
+
+  // Every icon goes through CoreIcon: a plain bundle PNG becomes a proper
+  // squircle with the Liquid Glass finish. Dark mode gets the `#1d1d1d`
+  // background treatment, light mode keeps the original background.
+  let dark = ColorScheme::detect_system() == ColorScheme::Dark;
+  let (icon_path, icon_glass) = match &info.icon_path {
+    Some(raw) => match about::beautify_icon(raw, &info.display_name, dark) {
+      Some(glass) => (Some(glass), true),
+      None => (Some(raw.clone()), false),
+    },
+    None => (about::fallback_icon(&info.display_name), true),
+  };
+
   let delegate = AboutDelegate {
     window_title: window_title.clone(),
     app_name: info.display_name,
     version: info.version,
-    icon_path: info.icon_path,
+    icon_path,
+    icon_glass,
   };
 
   let mut app = App::with_delegate(window_title, 340, 460, delegate);
@@ -188,5 +215,6 @@ fn main() {
   app.no_window_bar();
   app.fixed_size();
   app.no_scroll();
+  app.force_size(340, 460);
   app.run();
 }

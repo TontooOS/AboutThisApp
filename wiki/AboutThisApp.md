@@ -34,7 +34,7 @@ pub fn load_target(path: &Path, locale: &str) -> Result<TargetInfo, String>
 |---|---|---|
 | `display_name` | `String` | Localized app name, or the file stem without `.app` |
 | `version` | `String` | Version string, empty when unknown |
-| `icon_path` | `Option<PathBuf>` | Extracted icon file, when the bundle ships one |
+| `icon_path` | `Option<PathBuf>` | Raw extracted icon file, when the bundle ships one (`None` = use `fallback_icon`) |
 
 ### Rules
 
@@ -49,13 +49,40 @@ pub fn load_target(path: &Path, locale: &str) -> Result<TargetInfo, String>
   `Resources/icon.png`.
 - ZIP icons are extracted to `std::env::temp_dir()` as
   `about-this-app-icon-<AppName>.png`.
+- Every icon is finished through CoreIcon (see `## Icon Pipeline`).
 - Returns `Err` when the path does not exist or the file is not a valid
   ZIP bundle.
+
+## Icon Pipeline
+
+Every bundle icon — and the fallback tile for bundles without an icon —
+goes through CoreIcon (`CoreIcon::generator`), so a plain PNG is always
+shown as a proper Apple-style app icon.
+
+```rust
+pub fn beautify_icon(raw: &Path, app_name: &str, dark: bool) -> Option<PathBuf>
+pub fn fallback_icon(app_name: &str) -> Option<PathBuf>
+```
+
+| Function | Input | Output |
+|---|---|---|
+| `beautify_icon` | Raw bundle PNG | `about-this-app-icon-<AppName>-glass.png`: 1024x1024 squircle with the Liquid Glass depth finish (ambient + artwork shadow, inner bevel, specular rim, top gloss, vibrancy, bottom shade) |
+| `fallback_icon` | App name only | `about-this-app-icon-<AppName>-fallback.png`: white/black gradient squircle with the Liquid Glass finish |
+
+- `dark` selects the dark-mode background (`#1d1d1d`, artwork colors
+  preserved); light mode keeps the original background.
+- Both functions return `None` on failure: a failed beautify falls back to
+  the raw PNG (shown with a CSS corner radius), a failed fallback falls
+  back to a plain CSS gradient tile.
+- `main` tracks whether the displayed file is CoreIcon-finished in a local
+  `icon_glass` flag (already rounded with transparency, no CSS rounding
+  needed) and passes it to the root view.
 
 ## Window
 
 The window is a fixed, non-resizable 340x460 card with no scroll container
-and no system decoration bar.
+and no system decoration bar. `force_size` pins the exact size so oversized
+content can never stretch the card.
 
 ```rust
 let mut app = App::with_delegate(window_title, 340, 460, delegate);
@@ -63,6 +90,7 @@ app.auto_color_scheme();
 app.no_window_bar();
 app.fixed_size();
 app.no_scroll();
+app.force_size(340, 460);
 app.run();
 ```
 
@@ -71,7 +99,7 @@ app.run();
 | Element | Rule |
 |---|---|
 | `TitleBar` | Custom bar with `title("About {name}")` and `without_maximize()`, so only close and minimize show; both keep working via `__close` / `__minimize` |
-| `Icon` | Centered 120px icon with 28px corners and a soft shadow; white/black gradient tile when the bundle has no icon |
+| `Icon` | Centered 120px `GtkPicture` with `hexpand`/`vexpand` disabled so it can never stretch to fill the card; CoreIcon squircles shown as-is, raw PNGs with a 28px CSS corner radius |
 | `Name` | Bold SF Pro Display 15px, centered |
 | `Version` | SF Pro Display 12px in secondary gray, `Version {version}`; hidden entirely when the version is empty |
 
