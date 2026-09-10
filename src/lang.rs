@@ -37,6 +37,8 @@ fn lang_dirs() -> Vec<PathBuf> {
   let mut dirs = Vec::new();
   if let Ok(cwd) = std::env::current_dir() {
     dirs.push(cwd.join("lang"));
+    // Dev layout with Resources folder: <project>/Resources/lang.
+    dirs.push(cwd.join("Resources").join("lang"));
   }
   if let Ok(exe) = std::env::current_exe() {
     if let Some(parent) = exe.parent() {

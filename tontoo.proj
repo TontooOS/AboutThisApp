@@ -2,5 +2,5 @@
   "bundle_id": "com.tontoo.aboutthisapp",
   "name": "AboutThisApp",
   "version": "0.1.0",
-  "icon": "Resources/icon.png"
+  "icon": "Resources/app-icon.png"
 }

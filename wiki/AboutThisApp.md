@@ -115,6 +115,20 @@ app.run();
 - All text uses `SF Pro Display` (loaded from the system font paths
   `/usr/share/fonts/OTF/` and `/usr/share/fonts/TTF/`).
 
+## Bundle Resources
+
+| Path | Description |
+|---|---|
+| `Resources/app-icon.png` | Own app icon, referenced by `tontoo.proj` (`"icon": "Resources/app-icon.png"`); TBuild copies it to `App/icon.png` and `Resources/icon.png` |
+| `Resources/lang/en_us.json` | Bundled English strings (mirror of `lang/en_us.json`) |
+| `Resources/lang/de_de.json` | Bundled German strings (mirror of `lang/de_de.json`) |
+
+- Root `lang/` stays canonical: TBuild reads `Info.tontoo` names from
+  `project/lang/`, and dev runs (`cargo run`) load it via `cwd/lang`.
+- `Resources/lang/` ships inside the bundle; the runtime also checks
+  `cwd/Resources/lang` and `<bundle>/Resources/lang`.
+- Keep both copies in sync when strings change.
+
 ## Localization
 
 Only `en_us` and `de_de` exist; the active locale follows `LANGUAGE`,

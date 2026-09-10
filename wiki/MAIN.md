@@ -16,7 +16,7 @@ live system color scheme and loads `en_us`/`de_de` strings from `lang/`.
 |---|---|---|
 | Main index | [MAIN.md](MAIN.md) | This page |
 | Rules | [RULE.md](RULE.md) | Development and usage rules |
-| AboutThisApp | [AboutThisApp.md](AboutThisApp.md) | Bundle inspection, CoreIcon icon pipeline, About card layout and localization |
+| AboutThisApp | [AboutThisApp.md](AboutThisApp.md) | Bundle inspection, CoreIcon icon pipeline, About card layout, resources and localization |
 
 ## Quick Start
 
@@ -35,3 +35,4 @@ See [AboutThisApp.md](AboutThisApp.md) for details.
 
 - 2026-09-09: Initial AboutThisApp (bundle inspection + fixed About card + `lang/en_us.json` and `lang/de_de.json`).
 - 2026-09-10: CoreIcon icon pipeline (every icon becomes a Liquid Glass squircle), fixed 120px icon, pinned 340x460 window.
+- 2026-09-10: `Resources/` folder (`app-icon.png`, bundled `lang/` mirror).
