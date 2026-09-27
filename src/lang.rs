@@ -1,15 +1,16 @@
-//! Minimal locale store for AboutThisApp.
+//! Locale store for AboutThisApp, built on Accessibility.
 //!
-//! Loads `lang/en_us.json` or `lang/de_de.json` based on the system locale
+//! Loads `lang/en_us.json` and `lang/de_de.json` (Accessibility shape:
+//! `{"lang": ..., "translations": {...}}`) based on the system locale
 //! (`LANGUAGE`, `LC_ALL`, `LANG`, `/etc/locale.conf`). Falls back to English
 //! when no file matches. Only `en_us` and `de_de` are supported.
+//! Placeholders (`{name}`, `{version}`) are replaced by the callers.
 
-use once_cell::sync::OnceCell;
-use std::collections::HashMap;
 use std::path::PathBuf;
 
-static STRINGS: OnceCell<HashMap<String, String>> = OnceCell::new();
-static LOCALE: OnceCell<String> = OnceCell::new();
+use crate::Accessibility::{LangFile, LangStore};
+
+static LOCALE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 /// Detect the system locale. Returns `de_de` for German, `en_us` otherwise.
 pub fn detect_locale() -> String {
@@ -54,37 +55,35 @@ fn lang_dirs() -> Vec<PathBuf> {
   dirs
 }
 
-fn load_map(locale: &str) -> HashMap<String, String> {
-  let file = format!("{locale}.json");
-  for dir in lang_dirs() {
-    let path = dir.join(&file);
-    if let Ok(content) = std::fs::read_to_string(&path) {
-      if let Ok(map) = serde_json::from_str::<HashMap<String, String>>(&content) {
-        return map;
-      }
-    }
-  }
-  HashMap::new()
-}
-
 /// Load strings for the detected locale. Safe to call multiple times.
 pub fn init() {
-  if STRINGS.get().is_some() {
+  if LOCALE.get().is_some() {
     return;
   }
   let locale = detect_locale();
-  let map = load_map(&locale);
+  let mut files: Vec<LangFile> = Vec::new();
+  for dir in lang_dirs() {
+    for code in ["en_us", "de_de"] {
+      let path = dir.join(format!("{code}.json"));
+      if let Ok(file) = LangFile::from_file(&path) {
+        if !files.iter().any(|f| f.lang == file.lang) {
+          files.push(file);
+        }
+      }
+    }
+  }
+  if !files.is_empty() {
+    let _ = LangStore::init(files, Some("en_us".to_string()));
+  }
   let _ = LOCALE.set(locale);
-  let _ = STRINGS.set(map);
 }
 
 /// Look up a localized string. Returns the key itself when missing.
 pub fn t(key: &str) -> String {
   init();
-  STRINGS
-    .get()
-    .and_then(|map| map.get(key))
-    .cloned()
+  let locale = LOCALE.get().cloned().unwrap_or_else(|| "en_us".to_string());
+  LangStore::instance()
+    .t(&locale, key, None)
     .unwrap_or_else(|| key.to_string())
 }
 

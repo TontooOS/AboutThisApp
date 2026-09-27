@@ -38,11 +38,13 @@ pub fn load_target(path: &Path, locale: &str) -> Result<TargetInfo, String>
 
 ### Rules
 
-- Accepts both the zipped bundle (`Finder.app` file, as built by TBuild)
-  and an already extracted `<Name>.app` directory.
-- Reads `Info.tontoo` (`bundle_id`, localized `name` map, `version`).
-- Name lookup order: requested locale (`en_us` or `de_de`), then any of
-  `en_us`/`de_de`, then a plain string `name`, then the file stem.
+- Accepts both the zipped bundle (`Finder.app` file, as built by TBuild,
+  read with ArchiveKit `zip_unpack`) and an already extracted `<Name>.app`
+  directory.
+- Reads `Info.tontoo` (`bundle_id`, localized `name` map, `version`) with
+  Foundation `JsonDocument` (no serde usage in this crate).
+- Name lookup order: plain string `name` first, then the requested locale
+  (`en_us` or `de_de`), then any of `en_us`/`de_de`, then the file stem.
 - Missing `Info.tontoo` is not fatal: name falls back to the file stem and
   version stays empty (the version line is then hidden).
 - Icon lookup order mirrors TBuild: `App/icon.png` first, then
@@ -69,50 +71,44 @@ pub fn fallback_icon(app_name: &str) -> Option<PathBuf>
 | `beautify_icon` | Raw bundle PNG | `about-this-app-icon-<AppName>-glass.png`: 1024x1024 squircle with the Liquid Glass depth finish (ambient + artwork shadow, inner bevel, specular rim, top gloss, vibrancy, bottom shade) |
 | `fallback_icon` | App name only | `about-this-app-icon-<AppName>-fallback.png`: white/black gradient squircle with the Liquid Glass finish |
 
-- `dark` selects the dark-mode background (`#1d1d1d`, artwork colors
-  preserved); light mode keeps the original background.
+- `dark` selects the dark-mode background (artwork colors preserved);
+  light mode keeps the original background. The theme is probed once from
+  the settings daemon at startup.
 - Both functions return `None` on failure: a failed beautify falls back to
-  the raw PNG (shown with a CSS corner radius), a failed fallback falls
-  back to a plain CSS gradient tile.
-- `main` tracks whether the displayed file is CoreIcon-finished in a local
-  `icon_glass` flag (already rounded with transparency, no CSS rounding
-  needed) and passes it to the root view.
+  the raw PNG (shown with the same 28px `FileImage` corner radius), a
+  failed fallback falls back to the `FileImage` theme placeholder box.
 
 ## Window
 
-The window is a fixed, non-resizable 340x460 card with no scroll container
-and no system decoration bar. `force_size` pins the exact size so oversized
-content can never stretch the card.
+The window is a 340x460 card rendered with TontooUI on Vello/WGPU. The
+maximize light is disabled, so the size stays fixed in practice; there is
+no scroll container and no system decoration bar.
 
 ```rust
-let mut app = App::with_delegate(window_title, 340, 460, delegate);
-app.auto_color_scheme();
-app.no_window_bar();
-app.fixed_size();
-app.no_scroll();
-app.force_size(340, 460);
-app.run();
+let app = AboutApp::new(window_title, display_name, version_line, icon);
+run(&window_title, 340, 460, app)?;
 ```
 
 ### Layout
 
 | Element | Rule |
 |---|---|
-| `TitleBar` | Custom bar with `title("About {name}")` and `without_maximize()`, so only close and minimize show; both keep working via `__close` / `__minimize` |
-| `Icon` | Centered 120px `GtkPicture` with `hexpand`/`vexpand` disabled so it can never stretch to fill the card; CoreIcon squircles shown as-is, raw PNGs with a 28px CSS corner radius |
-| `Name` | Bold SF Pro Display 15px, centered |
-| `Version` | SF Pro Display 12px in secondary gray, `Version {version}`; hidden entirely when the version is empty |
+| `Titlebar` | `Titlebar::new("About {name}").without_maximize()`: the green light is gray and ignores clicks; close and minimize map to `WindowCommand::Close` / `WindowCommand::Minimize` |
+| `Icon` | Centered 120px `FileImage` with a 28px corner radius, cover-fit; shows the CoreIcon-finished temp PNG, the raw PNG when beautify fails, or the theme placeholder when no icon exists |
+| `Name` | Bold 15px (`FormattedText` bold span, `Subheadline`), centered, wraps inside 276px |
+| `Version` | 12px secondary (`BasicText`, `Caption`, `TextForeground::Secondary`), `Version {version}`; hidden entirely when the version is empty |
 
 ### Colors
 
 | Mode | Background | Foreground | Secondary |
 |---|---|---|---|
-| Dark | `#1d1d1d` | `#F5F5F7` | `#A1A1A6` |
-| Light | `#ececec` | `#1E1E1E` | `#6E6E73` |
+| Dark | `#1B2022` | `#D8D9D9` | theme dim |
+| Light | `#FFFFFF` | `#272727` | theme dim |
 
-- The scheme is read live via `current_color_scheme()` with
-  `ColorScheme::detect_system()` as the fallback.
-- All text uses `SF Pro Display` (loaded from the system font paths
+- The scheme follows the settings daemon live through `ThemeWatcher`
+  (with focus fade); the startup icon bake probes it once via
+  `poll(0.0)`.
+- All text uses SF Pro (system font, loaded from the system font paths
   `/usr/share/fonts/OTF/` and `/usr/share/fonts/TTF/`).
 
 ## Bundle Resources
@@ -131,8 +127,11 @@ app.run();
 
 ## Localization
 
-Only `en_us` and `de_de` exist; the active locale follows `LANGUAGE`,
-`LC_ALL`, `LANG` and `/etc/locale.conf`.
+Only `en_us` and `de_de` exist, loaded through Accessibility
+(`LangFile` / `LangStore`); the active locale follows `LANGUAGE`,
+`LC_ALL`, `LANG` and `/etc/locale.conf`. Files use the Accessibility
+shape (`{"lang": ..., "translations": {...}}`); `{name}` and `{version}`
+placeholders are replaced by the callers.
 
 | Key | `en_us` | `de_de` |
 |---|---|---|
@@ -146,10 +145,13 @@ the `name` key above.
 
 ```json
 {
-  "name": "AboutThisApp",
-  "about.title": "About {name}",
-  "about.version": "Version {version}",
-  "about.usage": "Usage: about-this-app <path-to-app.app>"
+  "lang": "en_us",
+  "translations": {
+    "name": "AboutThisApp",
+    "about.title": "About {name}",
+    "about.version": "Version {version}",
+    "about.usage": "Usage: about-this-app <path-to-app.app>"
+  }
 }
 ```
 

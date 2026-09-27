@@ -5,164 +5,170 @@
 //!
 //! Reads `Info.tontoo` (localized `name`, `version`) and the icon
 //! (`App/icon.png`, then `Resources/icon.png`) from the target bundle and
-//! shows a fixed 340x460 card: title bar without maximize button, centered
-//! 120px icon (every icon is finished through CoreIcon into an Apple-style
-//! squircle with the Liquid Glass depth effect), bold app name and a
-//! `Version %version%` line. All text uses SF Pro Display with `en_us` and
-//! `de_de` strings from `lang/`.
+//! shows a fixed 340x460 card: title bar with a disabled maximize light,
+//! centered 120px icon (every icon is finished through CoreIcon into an
+//! Apple-style squircle with the Liquid Glass depth effect), bold app name
+//! and a `Version {version}` line. All text uses SF Pro (system font) with
+//! `en_us` and `de_de` strings from `lang/` via Accessibility.
+//!
+//! Rendering is TontooUI on Vello/WGPU: `Titlebar::without_maximize`,
+//! `FileImage` for the CoreIcon-finished icon file, `FormattedText` with a
+//! bold span for the name and `BasicText` for the version. The theme follows
+//! the settings daemon live through `ThemeWatcher` (Dark `#1B2022` / Light
+//! `#FFFFFF`).
 
 mod about;
 mod lang;
 
 sdk::preinclude!();
 
-use UIKit::prelude::*;
-use UIKit::widget::{WidgetId, next_widget_id};
-use gtk::prelude::*;
 use std::path::PathBuf;
 
-const SF_PRO: &str = "SF Pro Display";
+use TontooUI::elements::{
+  Align, BasicText, FileImage, FormattedText, ImageFit, Span, TextAlignment,
+  TextForeground, TextStyle, Titlebar, TrafficAction, View, VStack,
+};
+use TontooUI::renderer::window::{App, Viewport, WindowCommand, run};
+use TontooUI::renderer::{FontSystem, ImageLoader};
+use TontooUI::theme::{ThemeMode, ThemeWatcher};
+use vello::Scene;
+use vello::peniko::Color;
 
-struct AboutDelegate {
-  window_title: String,
-  app_name: String,
-  version: String,
-  icon_path: Option<PathBuf>,
-  icon_glass: bool,
+const WINDOW_WIDTH: u32 = 340;
+const WINDOW_HEIGHT: u32 = 460;
+const ICON_PX: f32 = 120.0;
+const ICON_RADIUS: f32 = 28.0;
+const TEXT_WIDTH: f32 = 276.0;
+
+struct AboutApp {
+  bar: Titlebar,
+  stack: VStack,
+  watcher: ThemeWatcher,
+  focused: bool,
+  bg: Color,
+  command: Option<WindowCommand>,
 }
 
-impl AppDelegate for AboutDelegate {
-  fn view(&self) -> Box<dyn Widget> {
-    Box::new(AboutRoot {
-      id: next_widget_id(),
-      window_title: self.window_title.clone(),
-      app_name: self.app_name.clone(),
-      version: self.version.clone(),
-      icon_path: self.icon_path.clone(),
-      icon_glass: self.icon_glass,
-    })
+impl AboutApp {
+  fn new(
+    window_title: String,
+    app_name: String,
+    version_line: Option<String>,
+    icon: PathBuf,
+  ) -> Self {
+    let mut stack = VStack::new()
+      .spacing(8.0)
+      .align(Align::Center)
+      .child(
+        FileImage::new(icon, ICON_PX, ICON_PX)
+          .radius(ICON_RADIUS)
+          .fit(ImageFit::Cover),
+      )
+      .child(
+        FormattedText::spans(vec![Span::new(app_name).bold()])
+          .style(TextStyle::Subheadline)
+          .alignment(TextAlignment::Center)
+          .width(TEXT_WIDTH),
+      );
+    if let Some(line) = version_line {
+      stack = stack.child(
+        BasicText::new(line)
+          .style(TextStyle::Caption)
+          .foreground(TextForeground::Secondary)
+          .alignment(TextAlignment::Center)
+          .width(TEXT_WIDTH),
+      );
+    }
+    Self {
+      bar: Titlebar::new(window_title).without_maximize(),
+      stack,
+      watcher: ThemeWatcher::new(),
+      focused: true,
+      bg: TontooUI::renderer::window::BACKGROUND,
+      command: None,
+    }
   }
 }
 
-fn markup_label(text: &str, size: u32, weight: &str, color: &str) -> gtk::Label {
-  let label = gtk::Label::new(None);
-  label.set_use_markup(true);
-  label.set_halign(gtk::Align::Center);
-  label.set_justify(gtk::Justification::Center);
-  label.set_wrap(true);
-  label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-  label.set_markup(&format!(
-    "<span font_desc=\"{} {} {}\" foreground=\"{}\">{}</span>",
-    SF_PRO,
-    weight,
-    size,
-    color,
-    glib::markup_escape_text(text),
-  ));
-  label
-}
-
-/// Centered 120px app icon. CoreIcon-finished squircles (`glass`) are shown
-/// as-is (rounded with transparency baked in); raw square PNGs get a CSS
-/// corner radius so they never render as a hard square.
-fn icon_widget(icon_path: Option<&PathBuf>, glass: bool, dark: bool) -> gtk::Widget {
-  if let Some(path) = icon_path {
-    if let Some(path_str) = path.to_str() {
-      let picture = gtk::Picture::for_filename(path_str);
-      // Fixed card size: never expand, always centered (GtkPicture would
-      // otherwise stretch to fill the content width).
-      picture.set_size_request(120, 120);
-      picture.set_hexpand(false);
-      picture.set_vexpand(false);
-      picture.set_halign(gtk::Align::Center);
-      picture.set_valign(gtk::Align::Center);
-      picture.set_content_fit(gtk::ContentFit::Contain);
-      if !glass {
-        crate::UIKit::widget::apply_css(
-          &picture,
-          ".about-icon { border-radius: 28px; box-shadow: 0 2px 12px rgba(0,0,0,0.18); }",
-        );
-        picture.add_css_class("about-icon");
+impl App for AboutApp {
+  fn draw(
+    &mut self,
+    scene: &mut Scene,
+    fonts: &mut FontSystem,
+    images: &mut ImageLoader<'_>,
+    viewport: Viewport,
+    time_secs: f64,
+  ) {
+    self.watcher.poll(time_secs);
+    self.watcher.set_focused(self.focused, time_secs);
+    let palette = self.watcher.palette(time_secs);
+    self.bg = palette.bg;
+    let mode = self.watcher.theme().mode;
+    let dark = mode == ThemeMode::Dark;
+    let focused = self.focused;
+    if let Some(icon) = self.stack.child_mut::<FileImage>(0) {
+      icon.set_theme(dark);
+      icon.set_focused(focused);
+    }
+    if let Some(name) = self.stack.child_mut::<FormattedText>(1) {
+      name.set_theme(mode);
+      name.set_focused(focused);
+    }
+    for index in 2..self.stack.len() {
+      if let Some(line) = self.stack.child_mut::<BasicText>(index) {
+        line.set_theme(mode);
+        line.set_focused(focused);
       }
-      return picture.upcast();
     }
-  }
-  // Fallback: plain white/black gradient tile (120px, rounded 28px).
-  let tile = gtk::Box::new(gtk::Orientation::Vertical, 0);
-  tile.set_size_request(120, 120);
-  tile.set_halign(gtk::Align::Center);
-  tile.set_valign(gtk::Align::Center);
-  let edge = if dark { "rgba(255,255,255,0.20)" } else { "rgba(0,0,0,0.16)" };
-  crate::UIKit::widget::apply_css(
-    &tile,
-    &format!(
-      ".about-icon-fallback {{ background: linear-gradient(180deg, #FFFFFF, #000000); \
-       border-radius: 28px; border: 1px solid {}; \
-       box-shadow: 0 2px 12px rgba(0,0,0,0.18); }}",
-      edge
-    ),
-  );
-  tile.add_css_class("about-icon-fallback");
-  tile.upcast()
-}
 
-/// Root widget: custom title bar (no maximize) plus centered about card.
-struct AboutRoot {
-  id: WidgetId,
-  window_title: String,
-  app_name: String,
-  version: String,
-  icon_path: Option<PathBuf>,
-  icon_glass: bool,
-}
+    self.bar.set_palette(
+      palette.titlebar_bg,
+      palette.titlebar_text,
+      palette.divider,
+    );
+    self.bar.set_rect(viewport.x, viewport.y, viewport.width);
+    self.bar.draw(scene, fonts);
 
-impl Widget for AboutRoot {
-  fn id(&self) -> WidgetId {
-    self.id
+    // Title bar height is 31 px; the card content stays centered in the
+    // remaining body, like the old centered GTK box.
+    let top = viewport.y + 31.0;
+    let (stack_w, stack_h) = self.stack.measure(fonts);
+    let x = viewport.x + ((viewport.width - stack_w) / 2.0).max(0.0);
+    let body_h = (viewport.height - 31.0).max(0.0);
+    let y = top + ((body_h - stack_h) / 2.0).max(0.0);
+    self.stack.place(fonts, x, y, stack_w, stack_h);
+    self.stack.draw(scene, fonts, images);
   }
 
-  fn to_gtk(&self) -> gtk::Widget {
-    let dark = crate::UIKit::app::current_color_scheme()
-      .unwrap_or_else(ColorScheme::detect_system)
-      == ColorScheme::Dark;
-    let (bg, fg, secondary) = if dark {
-      ("#1d1d1d", "#F5F5F7", "#A1A1A6")
-    } else {
-      ("#ececec", "#1E1E1E", "#6E6E73")
-    };
+  fn background(&self) -> Color {
+    self.bg
+  }
 
-    let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    outer.set_hexpand(true);
-    outer.set_vexpand(true);
-    crate::UIKit::widget::apply_css(&outer, &format!(".about {{ background-color: {}; }}", bg));
-    outer.add_css_class("about");
+  fn drag_region(&self) -> Option<(f32, f32, f32, f32)> {
+    Some(self.bar.drag_rect())
+  }
 
-    // Title bar with close + minimize only (no green maximize button).
-    let bar = TontooUI::TitleBar::new()
-      .title(self.window_title.clone())
-      .without_maximize();
-    let bar_widget = bar.to_gtk();
-    outer.append(&bar_widget);
+  fn poll_window_command(&mut self) -> Option<WindowCommand> {
+    self.command.take()
+  }
 
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    content.set_hexpand(true);
-    content.set_vexpand(true);
-    content.set_halign(gtk::Align::Center);
-    content.set_valign(gtk::Align::Center);
-    content.set_margin_top(24);
-    content.set_margin_bottom(28);
-    content.set_margin_start(32);
-    content.set_margin_end(32);
-
-    content.append(&icon_widget(self.icon_path.as_ref(), self.icon_glass, dark));
-    content.append(&markup_label(&self.app_name, 15, "bold", fg));
-    if !self.version.trim().is_empty() {
-      let line = lang::t("about.version").replace("{version}", self.version.trim());
-      content.append(&markup_label(&line, 12, "normal", secondary));
+  fn mouse_down(&mut self, x: f64, y: f64) {
+    match self.bar.press(x as f32, y as f32) {
+      Some(TrafficAction::Close) => self.command = Some(WindowCommand::Close),
+      Some(TrafficAction::Minimize) => self.command = Some(WindowCommand::Minimize),
+      // Unreachable: the maximize light is disabled via `without_maximize`.
+      Some(TrafficAction::Maximize) => self.command = Some(WindowCommand::ToggleMaximize),
+      None => {}
     }
-    outer.append(&content);
+  }
 
-    outer.upcast()
+  fn mouse_move(&mut self, x: f64, y: f64) {
+    self.bar.set_hover(x as f32, y as f32);
+  }
+
+  fn set_focused(&mut self, focused: bool) {
+    self.focused = focused;
+    self.bar.set_focused(focused);
   }
 }
 
@@ -183,38 +189,37 @@ fn main() {
   let info = match about::load_target(&target, &locale) {
     Ok(info) => info,
     Err(err) => {
-      eprintln!("{}", err);
+      eprintln!("{err}");
       std::process::exit(1);
     }
   };
 
   let window_title = lang::t("about.title").replace("{name}", &info.display_name);
+  let version_line = if info.version.trim().is_empty() {
+    None
+  } else {
+    Some(
+      lang::t("about.version").replace("{version}", info.version.trim()),
+    )
+  };
 
   // Every icon goes through CoreIcon: a plain bundle PNG becomes a proper
-  // squircle with the Liquid Glass finish. Dark mode gets the `#1d1d1d`
-  // background treatment, light mode keeps the original background.
-  let dark = ColorScheme::detect_system() == ColorScheme::Dark;
-  let (icon_path, icon_glass) = match &info.icon_path {
-    Some(raw) => match about::beautify_icon(raw, &info.display_name, dark) {
-      Some(glass) => (Some(glass), true),
-      None => (Some(raw.clone()), false),
-    },
-    None => (about::fallback_icon(&info.display_name), true),
+  // squircle with the Liquid Glass finish. The theme is probed once from
+  // the settings daemon; dark mode gets the dark background treatment,
+  // light mode keeps the original background.
+  let mut probe = ThemeWatcher::new();
+  probe.poll(0.0);
+  let dark = probe.theme().mode == ThemeMode::Dark;
+  let icon = match &info.icon_path {
+    Some(raw) => about::beautify_icon(raw, &info.display_name, dark)
+      .unwrap_or_else(|| raw.clone()),
+    None => about::fallback_icon(&info.display_name)
+      .unwrap_or_else(|| PathBuf::from("__about_this_app_missing_icon__")),
   };
 
-  let delegate = AboutDelegate {
-    window_title: window_title.clone(),
-    app_name: info.display_name,
-    version: info.version,
-    icon_path,
-    icon_glass,
-  };
-
-  let mut app = App::with_delegate(window_title, 340, 460, delegate);
-  app.auto_color_scheme();
-  app.no_window_bar();
-  app.fixed_size();
-  app.no_scroll();
-  app.force_size(340, 460);
-  app.run();
+  let app = AboutApp::new(window_title.clone(), info.display_name, version_line, icon);
+  if let Err(err) = run(&window_title, WINDOW_WIDTH, WINDOW_HEIGHT, app) {
+    eprintln!("error: {err}");
+    std::process::exit(1);
+  }
 }

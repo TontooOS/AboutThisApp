@@ -1,6 +1,9 @@
 {
-  "name": "AboutThisApp",
-  "about.title": "Über {name}",
-  "about.version": "Version {version}",
-  "about.usage": "Aufruf: about-this-app <Pfad-zur-App.app>"
+  "lang": "de_de",
+  "translations": {
+    "name": "AboutThisApp",
+    "about.title": "Über {name}",
+    "about.version": "Version {version}",
+    "about.usage": "Aufruf: about-this-app <Pfad-zur-App.app>"
+  }
 }
