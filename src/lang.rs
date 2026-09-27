@@ -34,8 +34,16 @@ pub fn detect_locale() -> String {
 }
 
 /// Candidate directories holding the `lang/` folder.
+///
+/// `$ABOUT_THIS_APP_LANG_DIR` wins over everything (dev runs of the bare
+/// binary outside the project dir), then the usual candidates.
 fn lang_dirs() -> Vec<PathBuf> {
   let mut dirs = Vec::new();
+  if let Ok(env) = std::env::var("ABOUT_THIS_APP_LANG_DIR") {
+    if !env.is_empty() {
+      dirs.push(PathBuf::from(env));
+    }
+  }
   if let Ok(cwd) = std::env::current_dir() {
     dirs.push(cwd.join("lang"));
     // Dev layout with Resources folder: <project>/Resources/lang.
@@ -108,5 +116,14 @@ mod tests {
   fn missing_key_returns_key() {
     let value = t("missing.key.that.does.not.exist");
     assert_eq!(value, "missing.key.that.does.not.exist");
+  }
+
+  #[test]
+  fn project_files_translate_known_keys() {
+    // `cargo test` runs with the package root as cwd, so `lang/` is
+    // found and the Accessibility-shaped files must parse and resolve.
+    // Guards against format regressions (raw keys in the window).
+    assert_eq!(t("about.title"), "About {name}");
+    assert_eq!(t("about.version"), "Version {version}");
   }
 }

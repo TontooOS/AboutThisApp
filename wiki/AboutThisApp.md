@@ -133,6 +133,14 @@ Only `en_us` and `de_de` exist, loaded through Accessibility
 shape (`{"lang": ..., "translations": {...}}`); `{name}` and `{version}`
 placeholders are replaced by the callers.
 
+Lookup order for the `lang/` folder: `$ABOUT_THIS_APP_LANG_DIR` first
+(bare binary runs outside the project dir), then `cwd/lang`,
+`cwd/Resources/lang`, the binary dir and its parent (including
+`<bundle>/Resources/lang` inside an installed `.app`), then
+`/usr/share/about-this-app/lang`. When no file is found every lookup
+returns the raw key (visible failure, e.g. `about.title` in the title
+bar) instead of silently falling back.
+
 | Key | `en_us` | `de_de` |
 |---|---|---|
 | `name` | `AboutThisApp` | `AboutThisApp` |
