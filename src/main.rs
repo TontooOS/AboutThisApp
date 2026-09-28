@@ -203,14 +203,23 @@ fn main() {
     )
   };
 
-  // Every icon goes through CoreIcon: a plain bundle PNG becomes a proper
-  // squircle with the Liquid Glass finish. The theme is probed once from
-  // the settings daemon; dark mode gets the dark background treatment,
-  // light mode keeps the original background.
+  // Every icon goes through CoreIcon: `.tico` entries render into a
+  // finished PNG, plain files become a proper squircle with the Liquid
+  // Glass finish. The theme is probed once from the settings daemon; dark
+  // mode gets the dark background treatment, light mode keeps the
+  // original background.
   let mut probe = ThemeWatcher::new();
   probe.poll(0.0);
   let dark = probe.theme().mode == ThemeMode::Dark;
   let icon = match &info.icon_path {
+    Some(raw)
+      if raw
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("tico")) =>
+    {
+      about::tico_to_png(raw, &info.display_name)
+        .unwrap_or_else(|| raw.clone())
+    }
     Some(raw) => about::beautify_icon(raw, &info.display_name, dark)
       .unwrap_or_else(|| raw.clone()),
     None => about::fallback_icon(&info.display_name)

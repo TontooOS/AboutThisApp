@@ -1,7 +1,7 @@
 # AboutThisApp
 
 AboutThisApp renders a macOS-style About window for any TontooOS `.app`
-bundle path passed as the single CLI argument (e.g.
+container path passed as the single CLI argument (e.g.
 `about-this-app "/Users/paul/Applications/Finder.app"`).
 
 ## Invocation
@@ -34,49 +34,57 @@ pub fn load_target(path: &Path, locale: &str) -> Result<TargetInfo, String>
 |---|---|---|
 | `display_name` | `String` | Localized app name, or the file stem without `.app` |
 | `version` | `String` | Version string, empty when unknown |
-| `icon_path` | `Option<PathBuf>` | Raw extracted icon file, when the bundle ships one (`None` = use `fallback_icon`) |
+| `icon_path` | `Option<PathBuf>` | Extracted icon file (temp `.tico`/PNG), when the bundle ships one (`None` = use `fallback_icon`) |
 
 ### Rules
 
-- Accepts both the zipped bundle (`Finder.app` file, as built by TBuild,
-  read with ArchiveKit `zip_unpack`) and an already extracted `<Name>.app`
-  directory.
-- Reads `Info.tontoo` (`bundle_id`, localized `name` map, `version`) with
-  Foundation `JsonDocument` (no serde usage in this crate).
-- Name lookup order: plain string `name` first, then the requested locale
-  (`en_us` or `de_de`), then any of `en_us`/`de_de`, then the file stem.
-- Missing `Info.tontoo` is not fatal: name falls back to the file stem and
-  version stays empty (the version line is then hidden).
-- Icon lookup order mirrors TBuild: `App/icon.png` first, then
-  `Resources/icon.png`.
-- ZIP icons are extracted to `std::env::temp_dir()` as
-  `about-this-app-icon-<AppName>.png`.
+- Accepts both the single-file TAPP container (`Finder.app` file, as built
+  by TBuild) and an already extracted `<Name>.app` directory.
+- Containers are opened by index: only the footer, the central directory,
+  the manifest and the icon entries are read; binary and assets are never
+  touched.
+- Reads the fico `Info.tontoo` (`bundle_id`, `version`, `executable`,
+  `icon`, localized `name` table) with `AppManifest`; no serde usage in
+  this crate.
+- Name lookup order: requested locale (`en_us` or `de_de`), then any of
+  `en_us`/`de_de`, then the first available name, then the file stem.
+- Missing `Info.tontoo` in a directory is not fatal: name falls back to
+  the file stem and version stays empty (the version line is then hidden).
+- Icon lookup: the manifest `icon` entry first, then `App/icon.tico` and
+  `Resources/icon.tico` under the container top prefix.
+- Container icons are written to `std::env::temp_dir()` as
+  `about-this-app-icon-<AppName>-<file>` for the CoreIcon pipeline.
 - Every icon is finished through CoreIcon (see `## Icon Pipeline`).
 - Returns `Err` when the path does not exist or the file is not a valid
-  ZIP bundle.
+  TAPP container.
 
 ## Icon Pipeline
 
 Every bundle icon — and the fallback tile for bundles without an icon —
-goes through CoreIcon (`CoreIcon::generator`), so a plain PNG is always
-shown as a proper Apple-style app icon.
+goes through CoreIcon, so it is always shown as a proper Apple-style app
+icon.
 
 ```rust
+pub fn tico_to_png(tico: &Path, app_name: &str) -> Option<PathBuf>
 pub fn beautify_icon(raw: &Path, app_name: &str, dark: bool) -> Option<PathBuf>
 pub fn fallback_icon(app_name: &str) -> Option<PathBuf>
 ```
 
 | Function | Input | Output |
 |---|---|---|
-| `beautify_icon` | Raw bundle PNG | `about-this-app-icon-<AppName>-glass.png`: 1024x1024 squircle with the Liquid Glass depth finish (ambient + artwork shadow, inner bevel, specular rim, top gloss, vibrancy, bottom shade) |
+| `tico_to_png` | `.tico` container entry | `about-this-app-icon-<AppName>-tico.png`: 1024px render with the Apple app-icon finish baked in |
+| `beautify_icon` | Raw artwork file (PNG, ...) | `about-this-app-icon-<AppName>-glass.png`: 1024x1024 squircle with the Liquid Glass depth finish (ambient + artwork shadow, inner bevel, specular rim, top gloss, vibrancy, bottom shade) |
 | `fallback_icon` | App name only | `about-this-app-icon-<AppName>-fallback.png`: white/black gradient squircle with the Liquid Glass finish |
 
+- `.tico` entries render straight to PNG (already finished, no beautify);
+  plain files go through `beautify_icon`.
 - `dark` selects the dark-mode background (artwork colors preserved);
   light mode keeps the original background. The theme is probed once from
   the settings daemon at startup.
-- Both functions return `None` on failure: a failed beautify falls back to
-  the raw PNG (shown with the same 28px `FileImage` corner radius), a
-  failed fallback falls back to the `FileImage` theme placeholder box.
+- All functions return `None` on failure: a failed render/beautify falls
+  back to the raw file (shown with the same 28px `FileImage` corner
+  radius), a failed fallback falls back to the `FileImage` theme
+  placeholder box.
 
 ## Window
 
