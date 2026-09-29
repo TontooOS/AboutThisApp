@@ -1,6 +1,6 @@
 [package]
 name = "about-this-app"
-version = "26.1.0"
+version = "27.0.0"
 edition = "2021"
 description = "About window for TontooOS .app bundles"
 readme = "README.md"

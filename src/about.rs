@@ -13,7 +13,7 @@
 //! ```text
 //! app {
 //!   bundle_id: com.tontoo.finder
-//!   version: "26.1.0"
+//!   version: "27.0.0"
 //!   executable: App/finder
 //!   icon: App/icon.tico
 //!   name {

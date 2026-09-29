@@ -177,7 +177,7 @@ the `name` key above.
 cargo run -- "/Users/paul/Applications/Finder.app"
 ```
 
-Shows `About Finder` with the Finder icon and `Version 26.1.0`.
+Shows `About Finder` with the Finder icon and `Version 27.0.0`.
 
 ## Cross References
 
